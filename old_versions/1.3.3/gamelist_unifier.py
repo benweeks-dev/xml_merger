@@ -1,0 +1,452 @@
+#!/usr/bin/env python3
+"""
+GameList Unifier - Merge and standardize gamelist.xml files across emulation platforms
+Supports: RetroBat, RetroDECK, Miyoo Mini Plus, and other EmulationStation-based systems
+"""
+
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Dict, List, Set, Optional
+from dataclasses import dataclass, field
+import sys
+import re
+from collections import defaultdict
+
+@dataclass
+class GameEntry:
+    """Represents a unified game entry with all possible metadata"""
+    path: str
+    name: str = ""
+    desc: str = ""
+    rating: str = ""
+    releasedate: str = ""
+    developer: str = ""
+    publisher: str = ""
+    genre: str = ""
+    players: str = ""
+    hash: str = ""
+    md5: str = ""
+    genreid: str = ""
+    lang: str = ""
+    region: str = ""
+    
+    # Media paths
+    image: str = ""  # Main image (mix/fanart)
+    thumbnail: str = ""  # Box front
+    marquee: str = ""  # Wheel/logo
+    video: str = ""
+    fanart: str = ""  # Fanart/background
+    boxback: str = ""
+    map: str = ""  # Game map
+    manual: str = ""
+    screenshot: str = ""
+    titleshot: str = ""
+    
+    # User data fields
+    favorite: str = "false"
+    hidden: str = "false"
+    kidgame: str = "false"
+    lastplayed: str = ""
+    playcount: str = "0"
+    
+    # Metadata
+    source: str = ""
+    game_id: str = ""
+    
+    # Track which fields came from which source
+    data_sources: Dict[str, str] = field(default_factory=dict)
+
+class GameListUnifier:
+    """Main class for merging and standardizing gamelist.xml files"""
+    
+    # Standard media field mappings
+    MEDIA_FIELDS = {
+        'image', 'thumbnail', 'marquee', 'video', 'fanart', 'boxback', 
+        'map', 'manual', 'screenshot', 'titleshot'
+    }
+    
+    # All metadata fields to track
+    METADATA_FIELDS = {
+        'name', 'desc', 'rating', 'releasedate', 'developer', 'publisher',
+        'genre', 'players', 'hash', 'md5', 'genreid', 'lang', 'region',
+        'favorite', 'hidden', 'kidgame', 'lastplayed', 'playcount'
+    }
+    
+    def __init__(self, clean_names: bool = True):
+        self.games: Dict[str, GameEntry] = {}  # keyed by ROM path
+        self.provider_info: Dict[str, str] = {}
+        self.media_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self.clean_names = clean_names
+    
+    @staticmethod
+    def clean_game_name(name: str) -> str:
+        """
+        Clean game name by removing region and language tags
+        
+        Examples:
+            "Game Name (USA)" → "Game Name"
+            "Game Name (Japan, Europe) (En,Ja)" → "Game Name"
+            "Game Name (Rev 1) (USA) (En,Fr)" → "Game Name (Rev 1)"
+        """
+        if not name:
+            return name
+        
+        # Remove language tags like (En,Ja), (En,Fr,De), etc.
+        name = re.sub(r'\s*\([A-Z][a-z](?:,[A-Z][a-z])*\)', '', name)
+        
+        # Remove region tags - common patterns
+        # Single regions: (USA), (Japan), (Europe), (World), etc.
+        # Multiple regions: (Japan, USA), (USA, Europe), etc.
+        region_pattern = r'\s*\((?:USA|Japan|Europe|World|Asia|Korea|China|Australia|Brazil|Canada|France|Germany|Italy|Spain|UK|En|Ja|Fr|De|Es|Pt)(?:,\s*(?:USA|Japan|Europe|World|Asia|Korea|China|Australia|Brazil|Canada|France|Germany|Italy|Spain|UK|En|Ja|Fr|De|Es|Pt))*\)'
+        name = re.sub(region_pattern, '', name, flags=re.IGNORECASE)
+        
+        # Clean up extra spaces and trailing dashes/spaces
+        name = re.sub(r'\s+', ' ', name)  # Multiple spaces to single
+        name = re.sub(r'\s*-\s*$', '', name)  # Trailing dash
+        name = name.strip()
+        
+        return name
+        
+    def parse_gamelist(self, xml_path: Path, source_name: str = None) -> None:
+        """Parse a gamelist.xml file and merge into unified database"""
+        if source_name is None:
+            source_name = xml_path.parent.name
+            
+        print(f"\n📖 Parsing: {xml_path}")
+        
+        try:
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+        except Exception as e:
+            print(f"❌ Error parsing {xml_path}: {e}")
+            return
+        
+        # Extract provider info
+        provider = root.find('provider')
+        if provider is not None and not self.provider_info:
+            for child in provider:
+                self.provider_info[child.tag] = child.text or ""
+        
+        # Process each game
+        games_found = 0
+        for game in root.findall('game'):
+            path_elem = game.find('path')
+            if path_elem is None or not path_elem.text:
+                continue
+                
+            rom_path = path_elem.text.strip()
+            games_found += 1
+            
+            # Get or create game entry
+            if rom_path not in self.games:
+                self.games[rom_path] = GameEntry(path=rom_path)
+            
+            entry = self.games[rom_path]
+            
+            # Merge metadata (prefer non-empty values)
+            self._merge_field(entry, game, 'n', 'name', source_name)  # Skraper uses <n>
+            self._merge_field(entry, game, 'name', 'name', source_name)  # EmulationStation uses <name>
+            
+            for field in ['desc', 'rating', 'releasedate', 'developer', 'publisher',
+                         'genre', 'players', 'hash', 'md5', 'genreid', 'lang', 'region',
+                         'favorite', 'hidden', 'kidgame', 'lastplayed', 'playcount']:
+                self._merge_field(entry, game, field, field, source_name)
+            
+            # Merge media paths
+            for media_field in self.MEDIA_FIELDS:
+                self._merge_field(entry, game, media_field, media_field, source_name)
+            
+            # Store source info
+            if not entry.source:
+                entry.source = game.get('source', '')
+            if not entry.game_id:
+                entry.game_id = game.get('id', '')
+        
+        print(f"   ✓ Found {games_found} games")
+    
+    def _merge_field(self, entry: GameEntry, game_elem: ET.Element, 
+                    xml_tag: str, field_name: str, source_name: str) -> None:
+        """Merge a single field, preferring non-empty values"""
+        elem = game_elem.find(xml_tag)
+        if elem is not None and elem.text and elem.text.strip():
+            current_value = getattr(entry, field_name)
+            new_value = elem.text.strip()
+            
+            # Clean game names if enabled
+            if field_name == 'name' and self.clean_names:
+                new_value = self.clean_game_name(new_value)
+            
+            # Only update if current is empty or new value is longer/better
+            if not current_value or len(new_value) > len(current_value):
+                setattr(entry, field_name, new_value)
+                entry.data_sources[field_name] = source_name
+                
+                # Track media stats
+                if field_name in self.MEDIA_FIELDS:
+                    self.media_stats[source_name][field_name] += 1
+    
+    def standardize_media_paths(self, preferred_structure: str = 'retrobat') -> None:
+        """
+        Standardize media paths across all entries
+        Preserves region subfolder structure from ROM paths (e.g., JAPAN/, EUROPE/)
+        
+        Args:
+            preferred_structure: 'retrobat' (separate folders) or 'simple' (all in media/)
+        """
+        print(f"\n🎨 Standardizing media paths ({preferred_structure} structure)...")
+        
+        for rom_path, entry in self.games.items():
+            # Parse the ROM path to extract subfolder and filename
+            # Examples:
+            #   "./game.zip" -> subfolder="", filename="game"
+            #   "./JAPAN/game.zip" -> subfolder="JAPAN/", filename="game"
+            #   "./EUROPE/USA/game.zip" -> subfolder="EUROPE/USA/", filename="game"
+            
+            path_parts = Path(rom_path.lstrip('./')).parts
+            
+            if len(path_parts) > 1:
+                # Has subfolders (e.g., JAPAN/game.zip)
+                subfolder = '/'.join(path_parts[:-1]) + '/'
+                rom_filename = path_parts[-1]
+            else:
+                # No subfolder (e.g., game.zip)
+                subfolder = ''
+                rom_filename = path_parts[0]
+            
+            # Get ROM name without extension
+            rom_name = Path(rom_filename).stem
+            
+            if preferred_structure == 'retrobat':
+                # RetroBat style: separate folders for each media type
+                # ALWAYS use mix for image field, preserving subfolder
+                entry.image = f"./media/mix/{subfolder}{rom_name}.png"
+                
+                if not entry.thumbnail:
+                    entry.thumbnail = f"./media/box2dfront/{subfolder}{rom_name}.png"
+                if not entry.marquee:
+                    entry.marquee = f"./media/wheel/{subfolder}{rom_name}.png"
+                if not entry.video:
+                    entry.video = f"./media/video/{subfolder}{rom_name}.mp4"
+                if not entry.fanart:
+                    entry.fanart = f"./media/fanart/{subfolder}{rom_name}.png"
+                if not entry.boxback:
+                    entry.boxback = f"./media/box2dback/{subfolder}{rom_name}.png"
+                if not entry.map:
+                    entry.map = f"./media/maps/{subfolder}{rom_name}.png"
+                if not entry.manual:
+                    entry.manual = f"./media/manuals/{subfolder}{rom_name}.pdf"
+                if not entry.screenshot:
+                    entry.screenshot = f"./media/screenshot/{subfolder}{rom_name}.png"
+                if not entry.titleshot:
+                    entry.titleshot = f"./media/titleshot/{subfolder}{rom_name}.png"
+            else:
+                # Simple structure: all media in subfolders
+                if not entry.image:
+                    entry.image = f"./media/images/{subfolder}{rom_name}.png"
+                if not entry.thumbnail:
+                    entry.thumbnail = f"./media/thumbnails/{subfolder}{rom_name}.png"
+    
+    def validate_media(self, base_path: Path, report_missing: bool = True) -> Dict[str, List[str]]:
+        """
+        Validate that media files actually exist
+        
+        Returns:
+            Dictionary of missing files by media type
+        """
+        print(f"\n🔍 Validating media files in: {base_path}")
+        
+        missing = defaultdict(list)
+        found_count = defaultdict(int)
+        
+        for rom_path, entry in self.games.items():
+            for media_field in self.MEDIA_FIELDS:
+                media_path = getattr(entry, media_field)
+                if not media_path:
+                    continue
+                
+                # Convert relative path to absolute
+                full_path = base_path / media_path.lstrip('./')
+                
+                if full_path.exists():
+                    found_count[media_field] += 1
+                else:
+                    missing[media_field].append(str(media_path))
+        
+        # Print summary
+        print("\n📊 Media Validation Summary:")
+        for media_type in sorted(self.MEDIA_FIELDS):
+            total = sum(1 for e in self.games.values() if getattr(e, media_type))
+            found = found_count[media_type]
+            missing_count = len(missing[media_type])
+            
+            if total > 0:
+                percent = (found / total) * 100
+                status = "✓" if percent == 100 else "⚠" if percent > 50 else "❌"
+                print(f"   {status} {media_type:12s}: {found:3d}/{total:3d} found ({percent:5.1f}%)")
+        
+        return dict(missing)
+    
+    def generate_unified_gamelist(self, output_path: Path, format_style: str = 'retrobat', 
+                                  include_empty_tags: bool = True) -> None:
+        """
+        Generate a unified gamelist.xml file
+        
+        Args:
+            output_path: Where to save the unified gamelist
+            format_style: 'retrobat' (detailed) or 'simple' (minimal)
+            include_empty_tags: If True, include all standard tags even if empty
+        """
+        print(f"💾 Generating unified gamelist: {output_path}")
+        
+        root = ET.Element('gameList')
+        
+        # Add provider info if available
+        if self.provider_info:
+            provider = ET.SubElement(root, 'provider')
+            for key, value in self.provider_info.items():
+                elem = ET.SubElement(provider, key)
+                elem.text = value
+        
+        # Add games in sorted order
+        for rom_path in sorted(self.games.keys()):
+            entry = self.games[rom_path]
+            game = ET.SubElement(root, 'game')
+            
+            # Add ID and source attributes if available
+            if entry.game_id:
+                game.set('id', entry.game_id)
+            if entry.source:
+                game.set('source', entry.source)
+            
+            # Path (required)
+            ET.SubElement(game, 'path').text = entry.path
+            
+            # Name - always include (use 'name' for standard ES compatibility)
+            name_elem = ET.SubElement(game, 'name')
+            name_elem.text = entry.name if entry.name else ""
+            
+            # Core metadata - in standard order
+            core_fields = ['desc', 'rating', 'releasedate', 'developer', 'publisher',
+                          'genre', 'players']
+            
+            for field in core_fields:
+                value = getattr(entry, field)
+                elem = ET.SubElement(game, field)
+                elem.text = value if value else ""
+            
+            # Media paths - in standard order
+            media_fields = ['image', 'thumbnail', 'marquee', 'video', 'fanart', 
+                          'boxback', 'map', 'manual']
+            
+            for media_field in media_fields:
+                value = getattr(entry, media_field)
+                elem = ET.SubElement(game, media_field)
+                elem.text = value if value else ""
+            
+            # User data fields - in standard order
+            user_fields = ['favorite', 'hidden', 'kidgame', 'lastplayed', 'playcount']
+            for field in user_fields:
+                value = getattr(entry, field)
+                elem = ET.SubElement(game, field)
+                elem.text = value if value else ""
+            
+            # Technical metadata - at the end
+            tech_fields = ['lang', 'region']
+            for field in tech_fields:
+                value = getattr(entry, field)
+                elem = ET.SubElement(game, field)
+                elem.text = value if value else ""
+        
+        # Write XML with pretty formatting
+        self._prettify_and_save(root, output_path)
+        print(f"   ✓ Saved {len(self.games)} games")
+        if include_empty_tags:
+            print(f"   ✓ All standard tags included (empty tags preserved)")
+    
+    def _prettify_and_save(self, elem: ET.Element, filepath: Path) -> None:
+        """Save XML with proper indentation"""
+        from xml.dom import minidom
+        
+        rough_string = ET.tostring(elem, encoding='unicode')
+        reparsed = minidom.parseString(rough_string)
+        pretty_xml = reparsed.toprettyxml(indent="\t")
+        
+        # Remove extra blank lines
+        lines = [line for line in pretty_xml.split('\n') if line.strip()]
+        
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
+    
+    def generate_report(self, output_path: Path) -> None:
+        """Generate a detailed report of the merge operation"""
+        print(f"\n📋 Generating report: {output_path}")
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write("=" * 80 + "\n")
+            f.write("GAMELIST UNIFICATION REPORT\n")
+            f.write("=" * 80 + "\n\n")
+            
+            f.write(f"Total Games: {len(self.games)}\n\n")
+            
+            # Media statistics by source
+            f.write("MEDIA COVERAGE BY SOURCE:\n")
+            f.write("-" * 80 + "\n")
+            for source, stats in sorted(self.media_stats.items()):
+                f.write(f"\n{source}:\n")
+                for media_type, count in sorted(stats.items()):
+                    f.write(f"  {media_type:12s}: {count:3d} files\n")
+            
+            # Games with incomplete data
+            f.write("\n\nGAMES WITH INCOMPLETE METADATA:\n")
+            f.write("-" * 80 + "\n")
+            
+            incomplete = []
+            for rom_path, entry in sorted(self.games.items()):
+                missing_fields = []
+                if not entry.desc:
+                    missing_fields.append('description')
+                if not entry.developer:
+                    missing_fields.append('developer')
+                if not entry.releasedate:
+                    missing_fields.append('release date')
+                
+                if missing_fields:
+                    incomplete.append((entry.name or rom_path, missing_fields))
+            
+            if incomplete:
+                for game_name, missing in incomplete[:20]:  # Show first 20
+                    f.write(f"\n{game_name}:\n")
+                    f.write(f"  Missing: {', '.join(missing)}\n")
+                
+                if len(incomplete) > 20:
+                    f.write(f"\n... and {len(incomplete) - 20} more\n")
+            else:
+                f.write("All games have complete metadata!\n")
+        
+        print(f"   ✓ Report saved")
+
+def main():
+    """Main CLI interface"""
+    print("=" * 80)
+    print("GAMELIST UNIFIER - Merge and Standardize Your Emulation Gamelists")
+    print("=" * 80)
+    
+    unifier = GameListUnifier()
+    
+    # Example usage - you'll customize this
+    print("\nThis tool will:")
+    print("  1. Parse multiple gamelist.xml files")
+    print("  2. Merge data intelligently (prefer complete metadata)")
+    print("  3. Standardize media paths")
+    print("  4. Validate media file existence")
+    print("  5. Generate unified gamelist.xml files")
+    print("  6. Create a detailed report")
+    
+    print("\n" + "=" * 80)
+    print("READY TO USE!")
+    print("=" * 80)
+    print("\nSee the example code at the bottom of this script to customize for your setup.")
+
+if __name__ == "__main__":
+    main()
