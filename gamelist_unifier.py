@@ -286,8 +286,7 @@ class GameListUnifier:
             format_style: 'retrobat' (detailed) or 'simple' (minimal)
             include_empty_tags: If True, include all standard tags even if empty
         """
-        print(f"
-💾 Generating unified gamelist: {output_path}")
+        print(f"💾 Generating unified gamelist: {output_path}")
         
         root = ET.Element('gameList')
         

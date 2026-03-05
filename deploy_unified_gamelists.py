@@ -91,6 +91,45 @@ def find_pc_backup_path(system_name: str, pc_backup_base: Path) -> Path:
     
     return None
 
+def load_paths_from_master_index(unified_dir: Path) -> dict:
+    """
+    Load PC backup paths from the master index file
+    Returns dict: {system_name: pc_backup_path}
+    """
+    master_index = unified_dir / '_MASTER_INDEX.txt'
+    paths = {}
+    
+    if not master_index.exists():
+        return paths
+    
+    try:
+        with open(master_index, 'r', encoding='utf-8') as f:
+            current_system = None
+            for line in f:
+                line = line.strip()
+                
+                # Look for system headers (e.g., "NGP:")
+                if line and line.endswith(':') and not line.startswith(' '):
+                    current_system = line[:-1].lower()
+                
+                # Look for PC Backup path lines
+                if current_system and 'PC Backup:' in line and 'Not configured' not in line:
+                    # Extract path after "PC Backup:"
+                    parts = line.split('PC Backup:', 1)
+                    if len(parts) == 2:
+                        path_str = parts[1].strip()
+                        if path_str and path_str != 'Not configured':
+                            paths[current_system] = Path(path_str)
+        
+        print(f"\n📋 Loaded {len(paths)} PC backup paths from master index")
+        for system, path in paths.items():
+            print(f"   • {system}: {path}")
+    
+    except Exception as e:
+        print(f"\n⚠ Warning: Could not read master index: {e}")
+    
+    return paths
+
 def deploy_unified_gamelists():
     """Deploy unified gamelists to PC backup and RetroBat folders"""
     
@@ -136,7 +175,7 @@ def deploy_unified_gamelists():
         return
     
     # ========================================================================
-    # FIND UNIFIED GAMELISTS
+    # FIND UNIFIED GAMELISTS & MATCH TO DESTINATIONS
     # ========================================================================
     
     print("\n" + "=" * 80)
@@ -150,12 +189,100 @@ def deploy_unified_gamelists():
         print("Expected files like: ngp_unified_gamelist.xml, n64_unified_gamelist.xml, etc.")
         return
     
-    print(f"\n✓ Found {len(unified_files)} unified gamelists:")
-    systems = []
+    print(f"\n✓ Found {len(unified_files)} unified gamelists")
+    
+    # Load PC backup paths from master index
+    master_index_paths = load_paths_from_master_index(UNIFIED_DIR)
+    
+    deployment_plan = []
+    
     for file in unified_files:
         system = file.stem.replace('_unified_gamelist', '')
-        systems.append(system)
-        print(f"   • {system}")
+        print(f"\n📦 {system}")
+        
+        source_file = file
+        destinations = []
+        
+        # Find RetroBat destination
+        if retrobat_available:
+            retrobat_dest = RETROBAT_BASE / system
+            if retrobat_dest.exists():
+                destinations.append({
+                    'location': 'RetroBat',
+                    'path': retrobat_dest / f'{system}_unified_gamelist.xml'
+                })
+                print(f"   ✓ RetroBat: {retrobat_dest}")
+            else:
+                print(f"   ⚠ RetroBat: System folder not found")
+        
+        # Find PC Backup destination
+        if pc_backup_available:
+            pc_backup_path = None
+            
+            # 1. First check master index
+            if system in master_index_paths:
+                pc_backup_path = master_index_paths[system]
+                if pc_backup_path.exists():
+                    print(f"   ✓ PC Backup: {pc_backup_path} (from master index)")
+                else:
+                    print(f"   ⚠ PC Backup: Path from master index not found: {pc_backup_path}")
+                    pc_backup_path = None
+            
+            # 2. Try auto-detection if not in master index
+            if not pc_backup_path:
+                pc_backup_path = find_pc_backup_path(system, PC_BACKUP_BASE)
+                if pc_backup_path:
+                    print(f"   ✓ PC Backup: {pc_backup_path} (auto-detected)")
+            
+            # 3. If still not found, prompt user
+            if pc_backup_path:
+                pc_dest = pc_backup_path / 'media' / f'{system}_unified_gamelist.xml'
+                destinations.append({
+                    'location': 'PC Backup',
+                    'path': pc_dest
+                })
+            else:
+                # Couldn't find, prompt user
+                print(f"   ❓ PC Backup: Not found in master index or auto-detection")
+                response = input(f"      Enter PC backup path for {system} (or press Enter to skip): ").strip()
+                
+                if response:
+                    manual_path = Path(response)
+                    
+                    if manual_path.exists():
+                        # Determine where to put the gamelist
+                        if (manual_path / 'media').exists():
+                            # System folder provided
+                            pc_dest = manual_path / 'media' / f'{system}_unified_gamelist.xml'
+                        elif manual_path.name == 'media':
+                            # Media folder provided
+                            pc_dest = manual_path / f'{system}_unified_gamelist.xml'
+                        else:
+                            # Assume system folder, create media if needed
+                            pc_dest = manual_path / 'media' / f'{system}_unified_gamelist.xml'
+                        
+                        destinations.append({
+                            'location': 'PC Backup',
+                            'path': pc_dest
+                        })
+                        print(f"      ✓ Will deploy to: {pc_dest}")
+                    else:
+                        print(f"      ⚠ Path does not exist, skipping PC backup for {system}")
+                else:
+                    print(f"      → Skipping PC backup for {system}")
+        
+        if destinations:
+            deployment_plan.append({
+                'system': system,
+                'source': source_file,
+                'destinations': destinations
+            })
+        else:
+            print(f"   ⚠ No valid destinations found for {system}")
+    
+    if not deployment_plan:
+        print("\n❌ No systems have valid deployment destinations!")
+        return
     
     # ========================================================================
     # CONFIRM DEPLOYMENT
@@ -164,6 +291,13 @@ def deploy_unified_gamelists():
     print("\n" + "=" * 80)
     print("⚠  DEPLOYMENT PLAN")
     print("=" * 80)
+    
+    print(f"\nReady to deploy {len(deployment_plan)} systems:")
+    for plan in deployment_plan:
+        print(f"\n  {plan['system']}:")
+        for dest in plan['destinations']:
+            print(f"    → {dest['location']}: {dest['path'].parent}")
+    
     print("\nThis will copy unified gamelists as '[system]_unified_gamelist.xml'")
     print("Your original 'gamelist.xml' files will NOT be modified or deleted.")
     print("\nYou can manually rename them later:")
@@ -185,52 +319,28 @@ def deploy_unified_gamelists():
     
     deployment_log = []
     
-    for system in systems:
+    for plan in deployment_plan:
+        system = plan['system']
+        source_file = plan['source']
+        
         print(f"\n📦 Deploying: {system}")
         print("-" * 80)
         
-        source_file = UNIFIED_DIR / f'{system}_unified_gamelist.xml'
-        deployed_count = 0
-        
-        # Deploy to RetroBat
-        if retrobat_available:
-            retrobat_system_dir = RETROBAT_BASE / system
-            if retrobat_system_dir.exists():
-                dest_file = retrobat_system_dir / f'{system}_unified_gamelist.xml'
-                try:
-                    shutil.copy2(source_file, dest_file)
-                    print(f"   ✓ RetroBat:  {dest_file}")
-                    deployment_log.append(f"✓ {system} → RetroBat: {dest_file}")
-                    deployed_count += 1
-                except Exception as e:
-                    print(f"   ❌ RetroBat:  Error - {e}")
-                    deployment_log.append(f"❌ {system} → RetroBat: {e}")
-            else:
-                print(f"   ⚠ RetroBat:  System folder not found: {retrobat_system_dir}")
-        
-        # Deploy to PC Backup
-        if pc_backup_available:
-            pc_backup_path = find_pc_backup_path(system, PC_BACKUP_BASE)
-            if pc_backup_path:
-                # PC backup gamelist goes in media folder
-                dest_file = pc_backup_path / 'media' / f'{system}_unified_gamelist.xml'
-                
-                # Create media folder if it doesn't exist
+        for dest in plan['destinations']:
+            dest_file = dest['path']
+            location = dest['location']
+            
+            try:
+                # Create destination directory if needed
                 dest_file.parent.mkdir(parents=True, exist_ok=True)
                 
-                try:
-                    shutil.copy2(source_file, dest_file)
-                    print(f"   ✓ PC Backup: {dest_file}")
-                    deployment_log.append(f"✓ {system} → PC Backup: {dest_file}")
-                    deployed_count += 1
-                except Exception as e:
-                    print(f"   ❌ PC Backup: Error - {e}")
-                    deployment_log.append(f"❌ {system} → PC Backup: {e}")
-            else:
-                print(f"   ⚠ PC Backup: System folder not found")
-        
-        if deployed_count == 0:
-            print(f"   ⚠ No deployments for {system}")
+                # Copy the file
+                shutil.copy2(source_file, dest_file)
+                print(f"   ✓ {location}: {dest_file}")
+                deployment_log.append(f"✓ {system} → {location}: {dest_file}")
+            except Exception as e:
+                print(f"   ❌ {location}: Error - {e}")
+                deployment_log.append(f"❌ {system} → {location}: {e}")
     
     # ========================================================================
     # SAVE DEPLOYMENT LOG
