@@ -106,8 +106,8 @@ def load_paths_from_master_index(unified_dir: Path) -> dict:
         with open(master_index, 'r', encoding='utf-8') as f:
             current_system = None
             for line in f:
-                line = line.strip()
-                
+                line = line.rstrip()
+
                 # Look for system headers (e.g., "NGP:")
                 if line and line.endswith(':') and not line.startswith(' '):
                     current_system = line[:-1].lower()
@@ -120,6 +120,7 @@ def load_paths_from_master_index(unified_dir: Path) -> dict:
                         path_str = parts[1].strip()
                         if path_str and path_str != 'Not configured':
                             paths[current_system] = Path(path_str)
+                    current_system = None
         
         print(f"\n📋 Loaded {len(paths)} PC backup paths from master index")
         for system, path in paths.items():
