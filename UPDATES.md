@@ -49,18 +49,21 @@ unifier = GameListUnifier(clean_names=False)
   <publisher>SNK</publisher>
   <genre>Action</genre>
   <players>1-2</players>
-  <hash>ABCD1234</hash>
-  <md5></md5>  <!-- Empty but present -->
-  <genreid>262</genreid>
-  <lang></lang>  <!-- Empty but present -->
-  <region></region>  <!-- Empty but present -->
   <image>./media/mix/game.png</image>
   <thumbnail>./media/box2dfront/game.png</thumbnail>
   <marquee>./media/wheel/game.png</marquee>
   <video></video>  <!-- Empty but present -->
+  <fanart></fanart>  <!-- Empty but present -->
   <boxback>./media/box2dback/game.png</boxback>
+  <map></map>  <!-- Empty but present -->
   <manual></manual>  <!-- Empty but present -->
-  <screenshot></screenshot>  <!-- Empty but present -->
+  <favorite>false</favorite>
+  <hidden>false</hidden>
+  <kidgame>false</kidgame>
+  <lastplayed></lastplayed>  <!-- Empty but present -->
+  <playcount>0</playcount>
+  <lang></lang>  <!-- Empty but present -->
+  <region></region>  <!-- Empty but present -->
 </game>
 ```
 
@@ -99,21 +102,26 @@ unifier = GameListUnifier(clean_names=False)
 - `<genre>` - Genre/category
 - `<players>` - Player count (e.g., "1-2")
 
-### Technical Metadata (always included):
-- `<hash>` - ROM hash
-- `<md5>` - MD5 checksum
-- `<genreid>` - Numeric genre ID
-- `<lang>` - Language codes
-- `<region>` - Region codes
-
 ### Media Paths (always included):
 - `<image>` - Main image (mix folder)
 - `<thumbnail>` - Box front art
 - `<marquee>` - Wheel/logo
 - `<video>` - Video preview
+- `<fanart>` - Background fanart
 - `<boxback>` - Box back art
+- `<map>` - Game map image
 - `<manual>` - PDF manual
-- `<screenshot>` - Screenshot
+
+### User Data (always included):
+- `<favorite>` - Default: false
+- `<hidden>` - Default: false
+- `<kidgame>` - Default: false
+- `<lastplayed>` - Last played timestamp
+- `<playcount>` - Default: 0
+
+### Technical Metadata (always included):
+- `<lang>` - Language codes
+- `<region>` - Region codes
 
 ---
 

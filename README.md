@@ -7,9 +7,10 @@ Complete toolkit for managing and standardizing gamelist.xml files across multip
 ### Core Tools
 
 1. **gamelist_unifier.py** - Main library for merging and standardizing gamelists
-2. **example_usage.py** - Single system processing example
-3. **batch_process.py** - Process all systems at once
-4. **media_organizer.py** - Reorganize and validate media files
+2. **test_ngp.py** - Single system processing example (NGP; edit paths inside to use for other systems)
+3. **batch_process_custom.py** - Process all systems at once (paths hardcoded inside for Ben's setup)
+4. **deploy_unified_gamelists.py** - Copy unified gamelists to RetroBat and PC backup folders
+5. **gamelist_to_backup.py** - Activate unified gamelists in RetroBat (backs up originals, renames new ones)
 
 ## 🚀 Quick Start
 
@@ -23,25 +24,25 @@ Complete toolkit for managing and standardizing gamelist.xml files across multip
 #### Option 1: Process One System at a Time
 
 ```python
-python example_usage.py
+python test_ngp.py
 ```
 
 Edit the script to configure:
-- Your platform paths (PC backup, RetroBat, Miyoo, etc.)
-- Which system to process (ngp, n64, psx, etc.)
+- Your platform paths (PC backup base, RetroBat system folder)
 - Output directory
 
 #### Option 2: Batch Process Everything
 
 ```python
-python batch_process.py
+python batch_process_custom.py
 ```
 
 This will:
-- Automatically discover all systems across all platforms
+- Automatically discover all systems in RetroBat that have a gamelist.xml
+- Match each to the corresponding PC backup folder (using the `SYSTEM_MAPPING` dict)
 - Merge gamelists for each system
 - Generate unified gamelists and reports
-- Create a master index
+- Create a master index (`_MASTER_INDEX.txt`) used by the deploy script
 
 ## 📋 Detailed Workflow
 
@@ -52,7 +53,7 @@ Edit `batch_process.py` or `example_usage.py`:
 ```python
 PLATFORMS = {
     'pc_backup': Path(r'D:\Backups\Emulation\roms'),
-    'retrobat': Path(r'C:\RetroBat\roms'),
+    'retrobat': Path(r'D:\RetroBat\roms'),
     'miyoo': Path(r'E:\Miyoo\roms'),
 }
 ```
@@ -78,12 +79,16 @@ Check the output directory for:
 
 ### Step 4: Deploy Unified Gamelists
 
-Copy the unified gamelists back to your platforms:
+Run the deploy script to copy unified gamelists to each platform folder:
 
+```python
+python deploy_unified_gamelists.py
 ```
-retrobat:  C:\RetroBat\roms\{system}\gamelist.xml
-miyoo:     E:\Miyoo\roms\{system}\gamelist.xml
-retrodeck: /path/to/retrodeck/roms/{system}/gamelist.xml
+
+Then activate them (backs up originals and renames unified files to `gamelist.xml`):
+
+```python
+python gamelist_to_backup.py
 ```
 
 ## 🎨 Media Organization
@@ -103,29 +108,6 @@ roms/{system}/
 │   ├── manual/        # PDF manuals
 │   └── titleshot/     # Title screens
 └── [ROM files]
-```
-
-### Reorganize Media Files
-
-If your media is scattered across different folder names:
-
-```python
-from media_organizer import MediaOrganizer
-
-organizer = MediaOrganizer(Path(r'C:\RetroBat\roms\ngp'))
-
-# Scan current structure
-organizer.scan_media_structure()
-
-# Find issues
-organizer.find_duplicates()
-organizer.validate_file_extensions()
-
-# Reorganize (dry run first!)
-organizer.reorganize_to_standard(dry_run=True)
-
-# Actually move files
-organizer.reorganize_to_standard(dry_run=False)
 ```
 
 ## 🔧 Advanced Features
